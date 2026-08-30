@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:14-alpine
+    container_name: study_monitor_db
+    environment:
+      POSTGRES_DB: study_monitor
+      POSTGRES_USER: study_user
+      POSTGRES_PASSWORD: secure_password_change_me
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U study_user -d study_monitor"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - study_monitor_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: study_monitor_cache
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - study_monitor_network
+
+  api:
+    build: .
+    container_name: study_monitor_api
+    environment:
+      FLASK_ENV: production
+      FLASK_DEBUG: False
+      DATABASE_URL: postgresql://study_user:secure_password_change_me@postgres:5432/study_monitor
+      REDIS_URL: redis://redis:6379/0
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      COURSERA_API_KEY: ${COURSERA_API_KEY}
+      UDEMY_API_KEY: ${UDEMY_API_KEY}
+      EDXONLINE_API_KEY: ${EDXONLINE_API_KEY}
+      AGENT_LOG_LEVEL: INFO
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+      - ./agent:/app/agent
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    networks:
+      - study_monitor_network
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: study_monitor_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - api
+    networks:
+      - study_monitor_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  study_monitor_network:
+    driver: bridge
